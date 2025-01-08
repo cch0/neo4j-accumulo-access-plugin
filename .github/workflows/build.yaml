@@ -103,30 +103,6 @@ jobs:
           git push origin ${{ env.VERSION }}
 
 
-      - name: Update pom.xml file with release version
-        if: ${{ github.ref == 'refs/heads/main' }}
-        run: |
-          echo "Set project version to release version"
-          mvn versions:set -DnewVersion=${{ env.VERSION }}
-
-          echo "Echo version"
-          mvn help:evaluate -Dexpression=project.version -q -DforceStdout
-
-
-
-      - name: Publish to Github maven repo
-        if: ${{ github.ref == 'refs/heads/main' }}
-        run: |
-          echo "Publish to Github Maven repository"
-          mvn deploy --no-transfer-progress -DskipTests=true -s ${{ env.MAVEN_SETTINGS_XML }}
-
-          echo "list target directory"
-          ls -lh target
-
-          echo "Revert project version"
-          mvn versions:revert
-
-
       - name: check git status
         if: ${{ github.ref == 'refs/heads/main' }}
         run:
