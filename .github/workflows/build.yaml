@@ -1,0 +1,208 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    # disable triggering for the following paths and files
+    paths-ignore:
+      - '.github/**'
+      - '.gitignore'
+      - 'README.md'
+      - 'docs/**'
+      - 'intellij/**'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build Source
+
+    runs-on: ubuntu-22.04
+
+    outputs:
+      VERSION: ${{ steps.extract-version.outputs.VERSION }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        id: checkout-source
+
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'corretto' # See 'Supported distributions' for available options
+          java-version: '17'
+
+
+      - name: Add GITHUB_SHORT_SHA env property with commit short sha
+        id: add-git-short-sha
+        run: |
+          GITHUB_SHORT_SHA=$(echo ${GITHUB_SHA} | cut -c1-8)
+          echo "GITHUB_SHORT_SHA=$GITHUB_SHORT_SHA"
+          echo "GITHUB_SHORT_SHA=$GITHUB_SHORT_SHA" >> $GITHUB_ENV
+
+
+      - name: Extract version number from pom.xml file
+        id: extract-version
+        run: |
+          # Extract version number from pom.xml file.
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "POM_VERSION=$VERSION" >> $GITHUB_ENV
+
+          # Strip off of the word "-SNAPSHOT" if it exists.
+          VERSION=$(echo $VERSION | sed -e 's/-SNAPSHOT//')
+
+          # Construct the final version number
+          if ${{ github.ref != 'refs/heads/main' }}
+          then
+            VERSION=$VERSION-$GITHUB_SHORT_SHA
+          fi
+
+          echo "Setting VERSION environment variable with value: $VERSION"
+          echo "VERSION is $VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          # add to outputs
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+
+
+      - name: maven build
+        run: |
+          mvn --batch-mode --no-transfer-progress clean package -Dartifact.version=${{ env.VERSION }}
+
+          echo "list target directory"
+          ls -lh target
+
+
+      - name: Upload jar file as a Github artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: accumulo-access-${{ env.VERSION }}
+          path: |
+            ${{ github.workspace }}/target/accumulo-access-${{ env.VERSION }}.jar
+          retention-days: 5
+
+
+      - name: find out existing tags
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run:
+          git tag
+
+
+      - name: create git tag
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git tag ${{ env.VERSION }}
+          git push origin ${{ env.VERSION }}
+
+
+      - name: Update pom.xml file with release version
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          echo "Set project version to release version"
+          mvn versions:set -DnewVersion=${{ env.VERSION }}
+
+          echo "Echo version"
+          mvn help:evaluate -Dexpression=project.version -q -DforceStdout
+
+
+
+      - name: Publish to Github maven repo
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          echo "Publish to Github Maven repository"
+          mvn deploy --no-transfer-progress -DskipTests=true -s ${{ env.MAVEN_SETTINGS_XML }}
+
+          echo "list target directory"
+          ls -lh target
+
+          echo "Revert project version"
+          mvn versions:revert
+
+
+      - name: check git status
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run:
+          git status
+
+
+      - name: create next snapshot version
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          # update pom.xml files to add '-SNAPSHOT'
+          mvn build-helper:parse-version versions:set \
+            -DnewVersion=\${parsedVersion.majorVersion}.\${parsedVersion.nextMinorVersion}.0-SNAPSHOT
+
+
+          # Extract version number from pom.xml file.
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+
+          echo "Setting VERSION environment variable with value: $VERSION"
+          echo "VERSION is $VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+
+      - name: check git status after setting next snapshot version
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run:
+          git status
+
+
+      - name: commit changes after setting next snapshot version
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git commit -a -m "after release, updated version to ${{ env.VERSION }}"
+          git push
+
+
+  ##########################################################################################
+
+  create_github_release:
+    name: Create Github Release
+    needs: [ build, build ]
+
+    runs-on: ubuntu-22.04
+
+    permissions: write-all
+
+    if: ${{ github.ref == 'refs/heads/main' }}
+
+    steps:
+      - name: Echo
+        run: |
+          VERSION=${{needs.build.outputs.VERSION}}
+          echo "VERSION is $VERSION"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+
+      - name: Download jar artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifact
+          pattern: accumulo-access-*
+          merge-multiple: true
+
+
+      - name: List downloaded files
+        run: |
+          ls -l artifact
+
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          artifacts: "artifact/*"
+          tag: ${{ env.VERSION }}
+          generateReleaseNotes: false
+          makeLatest: true
+
+
+
