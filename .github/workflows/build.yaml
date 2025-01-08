@@ -11,6 +11,9 @@ on:
       - 'docs/**'
       - 'intellij/**'
 
+env:
+  GITHUB_TOKEN: ${{ secrets.PIPELINE_TOKEN }}
+
 defaults:
   run:
     shell: bash
@@ -203,6 +206,4 @@ jobs:
           tag: ${{ env.VERSION }}
           generateReleaseNotes: false
           makeLatest: true
-
-
 
