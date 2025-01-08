@@ -11,9 +11,6 @@ on:
       - 'docs/**'
       - 'intellij/**'
 
-# env:
-  # GITHUB_TOKEN: ${{ secrets.KDP_GHCR_TOKEN }}
-
 defaults:
   run:
     shell: bash
